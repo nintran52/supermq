@@ -53,7 +53,7 @@ source "$scriptdir/vault_cmd.sh"
 
 vaultEnablePKI() {
     vault secrets enable -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR} -path ${SMQ_VAULT_PKI_PATH} pki
-    vault secrets tune -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR} -max-lease-ttl=87600h ${SMQ_VAULT_PKI_PATH}
+    vault secrets tune -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR} -max-lease-ttl=438000h ${SMQ_VAULT_PKI_PATH}
 }
 
 vaultConfigPKIClusterPath() {
@@ -83,7 +83,7 @@ vaultGenerateRootCACertificate() {
         province="\"$SMQ_VAULT_PKI_CA_ST\"" \
         street_address="\"$SMQ_VAULT_PKI_CA_ADDR\"" \
         postal_code="\"$SMQ_VAULT_PKI_CA_PO\"" \
-        ttl=87600h | tee >(jq -r .data.certificate >"$scriptdir/data/${SMQ_VAULT_PKI_FILE_NAME}_ca.crt") \
+        ttl=438000h | tee >(jq -r .data.certificate >"$scriptdir/data/${SMQ_VAULT_PKI_FILE_NAME}_ca.crt") \
                          >(jq -r .data.issuing_ca  >"$scriptdir/data/${SMQ_VAULT_PKI_FILE_NAME}_issuing_ca.crt") \
                          >(jq -r .data.private_key >"$scriptdir/data/${SMQ_VAULT_PKI_FILE_NAME}_ca.key")
 }
@@ -100,7 +100,7 @@ vaultSetupRootCAIssuingURLs() {
 vaultGenerateIntermediateCAPKI() {
     echo "Generate Intermediate CA PKI"
     vault secrets enable -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR}  -path=${SMQ_VAULT_PKI_INT_PATH} pki
-    vault secrets tune -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR}  -max-lease-ttl=43800h ${SMQ_VAULT_PKI_INT_PATH}
+    vault secrets tune -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR}  -max-lease-ttl=350400h ${SMQ_VAULT_PKI_INT_PATH}
 }
 
 vaultConfigIntermediatePKIClusterPath() {
@@ -131,7 +131,7 @@ vaultSignIntermediateCSR() {
     if is_container_running "supermq-vault"; then
         docker cp "$scriptdir/data/${SMQ_VAULT_PKI_INT_FILE_NAME}.csr" supermq-vault:/vault/${SMQ_VAULT_PKI_INT_FILE_NAME}.csr
         vault write -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR} -format=json  ${SMQ_VAULT_PKI_PATH}/root/sign-intermediate \
-            csr=@/vault/${SMQ_VAULT_PKI_INT_FILE_NAME}.csr  ttl="8760h" \
+            csr=@/vault/${SMQ_VAULT_PKI_INT_FILE_NAME}.csr  ttl="350400h" \
             ou="\"$SMQ_VAULT_PKI_INT_CA_OU\""\
             organization="\"$SMQ_VAULT_PKI_INT_CA_O\"" \
             country="\"$SMQ_VAULT_PKI_INT_CA_C\"" \
@@ -143,7 +143,7 @@ vaultSignIntermediateCSR() {
                 >(jq -r .data.issuing_ca >"$scriptdir/data/${SMQ_VAULT_PKI_INT_FILE_NAME}_issuing_ca.crt")
     else
         vault write -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR} -format=json  ${SMQ_VAULT_PKI_PATH}/root/sign-intermediate \
-            csr=@"$scriptdir/data/${SMQ_VAULT_PKI_INT_FILE_NAME}.csr"  ttl="8760h" \
+            csr=@"$scriptdir/data/${SMQ_VAULT_PKI_INT_FILE_NAME}.csr"  ttl="350400h" \
             ou="\"$SMQ_VAULT_PKI_INT_CA_OU\""\
             organization="\"$SMQ_VAULT_PKI_INT_CA_O\"" \
             country="\"$SMQ_VAULT_PKI_INT_CA_C\"" \
@@ -188,7 +188,7 @@ vaultSetupServerCertsRole() {
         echo "Setup Server certificate role"
         vault write -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR} ${SMQ_VAULT_PKI_INT_PATH}/roles/${SMQ_VAULT_PKI_INT_SERVER_CERTS_ROLE_NAME} \
             allow_subdomains=true \
-            max_ttl="4320h"
+            max_ttl="262800h"
     fi
 }
 
@@ -198,7 +198,7 @@ vaultGenerateServerCertificate() {
     else
         echo "Generate server certificate"
         vault write -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR} -format=json ${SMQ_VAULT_PKI_INT_PATH}/issue/${SMQ_VAULT_PKI_INT_SERVER_CERTS_ROLE_NAME} \
-            common_name="$server_name" ttl="4320h" \
+            common_name="$server_name" ttl="262800h" \
             | tee >(jq -r .data.certificate >"$scriptdir/data/${server_name}.crt") \
                 >(jq -r .data.private_key >"$scriptdir/data/${server_name}.key")
     fi
