@@ -190,7 +190,7 @@ vaultSetupServerCertsRole() {
         echo "Setup Server certificate role"
         vault write -namespace=${SMQ_VAULT_NAMESPACE} -address=${SMQ_VAULT_ADDR} ${SMQ_VAULT_PKI_INT_PATH}/roles/${SMQ_VAULT_PKI_INT_SERVER_CERTS_ROLE_NAME} \
             allow_subdomains=true \
-        	allow_any_name=true \
+        	  allow_any_name=true \
             max_ttl="262800h"
     fi
 }

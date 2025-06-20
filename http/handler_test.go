@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	mghttp "github.com/absmach/mgate/pkg/http"
@@ -16,6 +17,7 @@ import (
 	apiutil "github.com/absmach/supermq/api/http/util"
 	chmocks "github.com/absmach/supermq/channels/mocks"
 	clmocks "github.com/absmach/supermq/clients/mocks"
+	dmocks "github.com/absmach/supermq/domains/mocks"
 	mhttp "github.com/absmach/supermq/http"
 	"github.com/absmach/supermq/internal/testsutil"
 	smqlog "github.com/absmach/supermq/logger"
@@ -53,10 +55,8 @@ var (
 	validToken                  = "token"
 	validID                     = testsutil.GenerateUUID(&testing.T{})
 	errClientNotInitialized     = errors.New("client is not initialized")
-	errFailedPublish            = errors.New("failed to publish")
 	errMissingTopicPub          = errors.New("failed to publish due to missing topic")
 	errMalformedTopic           = errors.New("malformed topic")
-	errFailedParseSubtopic      = errors.New("failed to parse subtopic")
 	errMalformedSubtopic        = errors.New("malformed subtopic")
 	errFailedPublishToMsgBroker = errors.New("failed to publish to supermq message broker")
 )
@@ -66,6 +66,7 @@ var (
 	channels  = new(chmocks.ChannelsServiceClient)
 	authn     = new(authnmocks.Authentication)
 	publisher = new(mocks.PubSub)
+	domains   = new(dmocks.DomainsServiceClient)
 )
 
 func newHandler() session.Handler {
@@ -73,9 +74,10 @@ func newHandler() session.Handler {
 	authn = new(authnmocks.Authentication)
 	clients = new(clmocks.ClientsServiceClient)
 	channels = new(chmocks.ChannelsServiceClient)
+	domains = new(dmocks.DomainsServiceClient)
 	publisher = new(mocks.PubSub)
 
-	return mhttp.NewHandler(publisher, authn, clients, channels, logger)
+	return mhttp.NewHandler(publisher, authn, clients, channels, domains, logger)
 }
 
 func TestAuthConnect(t *testing.T) {
@@ -225,7 +227,7 @@ func TestPublish(t *testing.T) {
 			session:  &clientKeySession,
 			authNRes: &grpcClientsV1.AuthnRes{Id: clientID, Authenticated: true},
 			authNErr: nil,
-			err:      errors.Wrap(errFailedPublish, errMalformedTopic),
+			err:      errMalformedTopic,
 		},
 		{
 			desc:     "publish with malformwd subtopic",
@@ -235,7 +237,7 @@ func TestPublish(t *testing.T) {
 			session:  &clientKeySession,
 			authNRes: &grpcClientsV1.AuthnRes{Id: clientID, Authenticated: true},
 			authNErr: nil,
-			err:      errors.Wrap(errFailedParseSubtopic, errMalformedSubtopic),
+			err:      errMalformedSubtopic,
 		},
 		{
 			desc:    "publish with empty password",
@@ -333,10 +335,14 @@ func TestPublish(t *testing.T) {
 			if tc.session != nil {
 				ctx = session.NewContext(ctx, tc.session)
 			}
+			var internalTopic string
+			if tc.topic != nil {
+				internalTopic = strings.TrimPrefix(strings.ReplaceAll(*tc.topic, "/", "."), ".m.")
+			}
 			clientsCall := clients.On("Authenticate", ctx, &grpcClientsV1.AuthnReq{ClientSecret: tc.password}).Return(tc.authNRes, tc.authNErr)
 			authCall := authn.On("Authenticate", ctx, mock.Anything).Return(tc.authNRes1, tc.authNErr)
 			channelsCall := channels.On("Authorize", ctx, mock.Anything).Return(tc.authZRes, tc.authZErr)
-			repoCall := publisher.On("Publish", ctx, tc.channelID, mock.Anything).Return(tc.publishErr)
+			repoCall := publisher.On("Publish", ctx, internalTopic, mock.Anything).Return(tc.publishErr)
 			err := handler.Publish(ctx, tc.topic, tc.payload)
 			hpe, ok := err.(mghttp.HTTPProxyError)
 			if ok {

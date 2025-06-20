@@ -72,7 +72,10 @@ func TestCreateChannelEndpoint(t *testing.T) {
 		Metadata: map[string]interface{}{
 			"name": "test",
 		},
+		Route: valid,
 	}
+	reqWithRoute := reqChannel
+	reqWithRoute.Route = valid
 
 	cases := []struct {
 		desc        string
@@ -92,6 +95,16 @@ func TestCreateChannelEndpoint(t *testing.T) {
 			token:       validToken,
 			domainID:    validID,
 			req:         reqChannel,
+			contentType: contentType,
+			svcResp:     []channels.Channel{validChannelResp},
+			status:      http.StatusCreated,
+			err:         nil,
+		},
+		{
+			desc:        "create channel with route",
+			token:       validToken,
+			domainID:    validID,
+			req:         reqWithRoute,
 			contentType: contentType,
 			svcResp:     []channels.Channel{validChannelResp},
 			status:      http.StatusCreated,
@@ -139,6 +152,29 @@ func TestCreateChannelEndpoint(t *testing.T) {
 			contentType: contentType,
 			status:      http.StatusBadRequest,
 			err:         apiutil.ErrNameSize,
+		},
+		{
+			desc:     "create channel with invalid route format",
+			token:    validToken,
+			domainID: validID,
+			req: channels.Channel{
+				Name:  valid,
+				Route: "__invalid",
+			},
+			contentType: contentType,
+			status:      http.StatusBadRequest,
+			err:         apiutil.ErrInvalidRouteFormat,
+		},
+		{
+			desc:  "create channel with UUID route",
+			token: validToken, domainID: validID,
+			req: channels.Channel{
+				Name:  valid,
+				Route: testsutil.GenerateUUID(t),
+			},
+			contentType: contentType,
+			status:      http.StatusBadRequest,
+			err:         apiutil.ErrInvalidRouteFormat,
 		},
 		{
 			desc:        "create channel with invalid content type",
@@ -205,6 +241,7 @@ func TestCreateChannelsEndpoint(t *testing.T) {
 			Metadata: map[string]interface{}{
 				"name": "test",
 			},
+			Route: valid,
 		},
 	}
 
@@ -275,6 +312,33 @@ func TestCreateChannelsEndpoint(t *testing.T) {
 			contentType: contentType,
 			status:      http.StatusBadRequest,
 			err:         apiutil.ErrNameSize,
+		},
+		{
+			desc:     "create channels with invalid route format",
+			token:    validToken,
+			domainID: validID,
+			req: []channels.Channel{
+				{
+					Name:  valid,
+					Route: "__invalid",
+				},
+			},
+			contentType: contentType,
+			status:      http.StatusBadRequest,
+			err:         apiutil.ErrInvalidRouteFormat,
+		},
+		{
+			desc:  "create channel with UUID route",
+			token: validToken, domainID: validID,
+			req: []channels.Channel{
+				{
+					Name:  valid,
+					Route: testsutil.GenerateUUID(t),
+				},
+			},
+			contentType: contentType,
+			status:      http.StatusBadRequest,
+			err:         apiutil.ErrInvalidRouteFormat,
 		},
 		{
 			desc:        "create channels with invalid content type",

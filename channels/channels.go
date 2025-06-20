@@ -7,6 +7,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/absmach/supermq/internal/nullable"
 	"github.com/absmach/supermq/pkg/authn"
 	"github.com/absmach/supermq/pkg/connections"
 	"github.com/absmach/supermq/pkg/roles"
@@ -23,6 +24,7 @@ type Channel struct {
 	Tags        []string  `json:"tags,omitempty"`
 	ParentGroup string    `json:"parent_group_id,omitempty"`
 	Domain      string    `json:"domain_id,omitempty"`
+	Route       string    `json:"route,omitempty"`
 	Metadata    Metadata  `json:"metadata,omitempty"`
 	CreatedBy   string    `json:"created_by,omitempty"`
 	CreatedAt   time.Time `json:"created_at,omitempty"`
@@ -45,25 +47,25 @@ type Channel struct {
 }
 
 type Page struct {
-	Total          uint64   `json:"total"`
-	Offset         uint64   `json:"offset"`
-	Limit          uint64   `json:"limit"`
-	Order          string   `json:"order,omitempty"`
-	Dir            string   `json:"dir,omitempty"`
-	ID             string   `json:"id,omitempty"`
-	Name           string   `json:"name,omitempty"`
-	Metadata       Metadata `json:"metadata,omitempty"`
-	Domain         string   `json:"domain,omitempty"`
-	Tag            string   `json:"tag,omitempty"`
-	Status         Status   `json:"status,omitempty"`
-	Group          string   `json:"group,omitempty"`
-	Client         string   `json:"client,omitempty"`
-	ConnectionType string   `json:"connection_type,omitempty"`
-	RoleName       string   `json:"role_name,omitempty"`
-	RoleID         string   `json:"role_id,omitempty"`
-	Actions        []string `json:"actions,omitempty"`
-	AccessType     string   `json:"access_type,omitempty"`
-	IDs            []string `json:"-"`
+	Total          uint64                 `json:"total"`
+	Offset         uint64                 `json:"offset"`
+	Limit          uint64                 `json:"limit"`
+	Order          string                 `json:"order,omitempty"`
+	Dir            string                 `json:"dir,omitempty"`
+	ID             string                 `json:"id,omitempty"`
+	Name           string                 `json:"name,omitempty"`
+	Metadata       Metadata               `json:"metadata,omitempty"`
+	Domain         string                 `json:"domain,omitempty"`
+	Tag            string                 `json:"tag,omitempty"`
+	Status         Status                 `json:"status,omitempty"`
+	Group          nullable.Value[string] `json:"group,omitempty"`
+	Client         string                 `json:"client,omitempty"`
+	ConnectionType string                 `json:"connection_type,omitempty"`
+	RoleName       string                 `json:"role_name,omitempty"`
+	RoleID         string                 `json:"role_id,omitempty"`
+	Actions        []string               `json:"actions,omitempty"`
+	AccessType     string                 `json:"access_type,omitempty"`
+	IDs            []string               `json:"-"`
 }
 
 // ChannelsPage contains page related metadata as well as list of channels that
@@ -150,6 +152,9 @@ type Repository interface {
 	// RetrieveByID retrieves the channel having the provided identifier
 	RetrieveByID(ctx context.Context, id string) (Channel, error)
 
+	// RetrieveByRoute retrieves the channel having the provided route
+	RetrieveByRoute(ctx context.Context, route, domainID string) (Channel, error)
+
 	// RetrieveByIDWithRoles retrieves channel by its unique ID along with member roles.
 	RetrieveByIDWithRoles(ctx context.Context, id, memberID string) (Channel, error)
 
@@ -186,4 +191,16 @@ type Repository interface {
 	UnsetParentGroupFromChannels(ctx context.Context, parentGroupID string) error
 
 	roles.Repository
+}
+
+// Cache contains channels caching interface.
+type Cache interface {
+	// Save stores the channelID for the given domain ID and channel route.
+	Save(ctx context.Context, channelRoute, domainID, channelID string) error
+
+	// ID retrieves the channelID for the given domain ID and channel route.
+	ID(ctx context.Context, channelRoute, domainID string) (string, error)
+
+	// Remove removes the channel ID for the given domain ID and channel route.
+	Remove(ctx context.Context, channelRoute, domainID string) error
 }

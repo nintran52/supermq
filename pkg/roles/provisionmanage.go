@@ -49,6 +49,14 @@ func NewProvisionManageService(entityType string, repo Repository, policy polici
 	return rm, nil
 }
 
+func (pms ProvisionManageService) BuiltInRoleActions(name BuiltInRoleName) ([]Action, error) {
+	actions, ok := pms.builtInRoles[name]
+	if !ok {
+		return nil, errors.Wrap(svcerr.ErrNotFound, fmt.Errorf("role %s not found", name))
+	}
+	return actions, nil
+}
+
 func toRolesActions(actions []string) []Action {
 	roActions := []Action{}
 	for _, action := range actions {
@@ -166,7 +174,7 @@ func (r ProvisionManageService) AddNewEntitiesRoles(ctx context.Context, domainI
 					ID:        id,
 					Name:      defaultRole.String(),
 					EntityID:  entityID,
-					CreatedAt: time.Now(),
+					CreatedAt: time.Now().UTC(),
 					CreatedBy: userID,
 				},
 				OptionalActions: caps,
@@ -236,7 +244,7 @@ func (r ProvisionManageService) AddRole(ctx context.Context, session authn.Sessi
 				ID:        id,
 				Name:      roleName,
 				EntityID:  entityID,
-				CreatedAt: time.Now(),
+				CreatedAt: time.Now().UTC(),
 				CreatedBy: session.UserID,
 			},
 			OptionalActions: optionalActions,
@@ -321,7 +329,7 @@ func (r ProvisionManageService) UpdateRoleName(ctx context.Context, session auth
 		EntityID:  entityID,
 		Name:      newRoleName,
 		UpdatedBy: session.UserID,
-		UpdatedAt: time.Now(),
+		UpdatedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		return Role{}, errors.Wrap(svcerr.ErrUpdateEntity, err)
@@ -391,7 +399,7 @@ func (r ProvisionManageService) RoleAddActions(ctx context.Context, session auth
 		}
 	}()
 
-	ro.UpdatedAt = time.Now()
+	ro.UpdatedAt = time.Now().UTC()
 	ro.UpdatedBy = session.UserID
 
 	resActs, err := r.repo.RoleAddActions(ctx, ro, actions)
@@ -452,7 +460,7 @@ func (r ProvisionManageService) RoleRemoveActions(ctx context.Context, session a
 	if err := r.policy.DeletePolicies(ctx, prs); err != nil {
 		return errors.Wrap(svcerr.ErrDeletePolicies, err)
 	}
-	ro.UpdatedAt = time.Now()
+	ro.UpdatedAt = time.Now().UTC()
 	ro.UpdatedBy = session.UserID
 	if err := r.repo.RoleRemoveActions(ctx, ro, actions); err != nil {
 		return errors.Wrap(svcerr.ErrRemoveEntity, err)
@@ -475,7 +483,7 @@ func (r ProvisionManageService) RoleRemoveAllActions(ctx context.Context, sessio
 		return errors.Wrap(svcerr.ErrDeletePolicies, err)
 	}
 
-	ro.UpdatedAt = time.Now()
+	ro.UpdatedAt = time.Now().UTC()
 	ro.UpdatedBy = session.UserID
 
 	if err := r.repo.RoleRemoveAllActions(ctx, ro); err != nil {
@@ -517,7 +525,7 @@ func (r ProvisionManageService) RoleAddMembers(ctx context.Context, session auth
 		}
 	}()
 
-	ro.UpdatedAt = time.Now()
+	ro.UpdatedAt = time.Now().UTC()
 	ro.UpdatedBy = session.UserID
 
 	mems, err := r.repo.RoleAddMembers(ctx, ro, members)
@@ -578,7 +586,7 @@ func (r ProvisionManageService) RoleRemoveMembers(ctx context.Context, session a
 		return errors.Wrap(svcerr.ErrDeletePolicies, err)
 	}
 
-	ro.UpdatedAt = time.Now()
+	ro.UpdatedAt = time.Now().UTC()
 	ro.UpdatedBy = session.UserID
 	if err := r.repo.RoleRemoveMembers(ctx, ro, members); err != nil {
 		return errors.Wrap(svcerr.ErrRemoveEntity, err)
@@ -602,7 +610,7 @@ func (r ProvisionManageService) RoleRemoveAllMembers(ctx context.Context, sessio
 		return errors.Wrap(svcerr.ErrDeletePolicies, err)
 	}
 
-	ro.UpdatedAt = time.Now()
+	ro.UpdatedAt = time.Now().UTC()
 	ro.UpdatedBy = session.UserID
 
 	if err := r.repo.RoleRemoveAllMembers(ctx, ro); err != nil {

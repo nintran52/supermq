@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +15,9 @@ import (
 	"github.com/absmach/mgate/pkg/session"
 	grpcChannelsV1 "github.com/absmach/supermq/api/grpc/channels/v1"
 	grpcClientsV1 "github.com/absmach/supermq/api/grpc/clients/v1"
+	grpcCommonV1 "github.com/absmach/supermq/api/grpc/common/v1"
+	grpcDomainsV1 "github.com/absmach/supermq/api/grpc/domains/v1"
+	api "github.com/absmach/supermq/api/http"
 	apiutil "github.com/absmach/supermq/api/http/util"
 	smqauthn "github.com/absmach/supermq/pkg/authn"
 	"github.com/absmach/supermq/pkg/connections"
@@ -40,13 +41,10 @@ const (
 
 // Error wrappers for MQTT errors.
 var (
-	channelRegExp = regexp.MustCompile(`^\/?m\/([\w\-]+)\/c\/([\w\-]+)(\/[^?]*)?(\?.*)?$`)
-
-	errMalformedSubtopic        = mgate.NewHTTPProxyError(http.StatusBadRequest, errors.New("malformed subtopic"))
-	errClientNotInitialized     = mgate.NewHTTPProxyError(http.StatusInternalServerError, errors.New("client is not initialized"))
-	errMalformedTopic           = mgate.NewHTTPProxyError(http.StatusBadRequest, errors.New("malformed topic"))
-	errMissingTopicPub          = mgate.NewHTTPProxyError(http.StatusBadRequest, errors.New("failed to publish due to missing topic"))
-	errMissingTopicSub          = mgate.NewHTTPProxyError(http.StatusBadRequest, errors.New("failed to subscribe due to missing topic"))
+	errClientNotInitialized     = errors.New("client is not initialized")
+	errMissingTopicPub          = errors.New("failed to publish due to missing topic")
+	errMissingTopicSub          = errors.New("failed to subscribe due to missing topic")
+	errFailedPublish            = errors.New("failed to publish")
 	errFailedPublishToMsgBroker = errors.New("failed to publish to supermq message broker")
 )
 
@@ -55,18 +53,20 @@ type handler struct {
 	pubsub   messaging.PubSub
 	clients  grpcClientsV1.ClientsServiceClient
 	channels grpcChannelsV1.ChannelsServiceClient
+	domains  grpcDomainsV1.DomainsServiceClient
 	authn    smqauthn.Authentication
 	logger   *slog.Logger
 }
 
 // NewHandler creates new Handler entity.
-func NewHandler(pubsub messaging.PubSub, logger *slog.Logger, authn smqauthn.Authentication, clients grpcClientsV1.ClientsServiceClient, channels grpcChannelsV1.ChannelsServiceClient) session.Handler {
+func NewHandler(pubsub messaging.PubSub, logger *slog.Logger, authn smqauthn.Authentication, clients grpcClientsV1.ClientsServiceClient, channels grpcChannelsV1.ChannelsServiceClient, domains grpcDomainsV1.DomainsServiceClient) session.Handler {
 	return &handler{
 		logger:   logger,
 		pubsub:   pubsub,
 		authn:    authn,
 		clients:  clients,
 		channels: channels,
+		domains:  domains,
 	}
 }
 
@@ -95,9 +95,29 @@ func (h *handler) AuthPublish(ctx context.Context, topic *string, payload *[]byt
 		token = string(s.Password)
 	}
 
-	_, _, err := h.authAccess(ctx, token, *topic, connections.Publish)
+	domain, channel, _, err := messaging.ParsePublishTopic(*topic)
+	if err != nil {
+		return err
+	}
+	domainID, err := h.resolveDomain(ctx, domain)
+	if err != nil {
+		return mgate.NewHTTPProxyError(http.StatusBadRequest, errors.Wrap(errFailedResolveDomain, err))
+	}
+	chanID, err := h.resolveChannel(ctx, channel, domainID)
+	if err != nil {
+		return mgate.NewHTTPProxyError(http.StatusBadRequest, errors.Wrap(errFailedResolveChannel, err))
+	}
 
-	return err
+	clientID, clientType, err := h.authAccess(ctx, token, domainID, chanID, connections.Publish)
+	if err != nil {
+		return err
+	}
+
+	if s.Username == "" && clientType == policies.ClientType {
+		s.Username = clientID
+	}
+
+	return nil
 }
 
 // AuthSubscribe is called on device publish,
@@ -112,7 +132,19 @@ func (h *handler) AuthSubscribe(ctx context.Context, topics *[]string) error {
 	}
 
 	for _, topic := range *topics {
-		if _, _, err := h.authAccess(ctx, string(s.Password), topic, connections.Subscribe); err != nil {
+		domain, channel, _, err := messaging.ParseSubscribeTopic(topic)
+		if err != nil {
+			return err
+		}
+		domainID, err := h.resolveDomain(ctx, domain)
+		if err != nil {
+			return mgate.NewHTTPProxyError(http.StatusBadRequest, errors.Wrap(errFailedResolveDomain, err))
+		}
+		chanID, err := h.resolveChannel(ctx, channel, domainID)
+		if err != nil {
+			return mgate.NewHTTPProxyError(http.StatusBadRequest, errors.Wrap(errFailedResolveChannel, err))
+		}
+		if _, _, err := h.authAccess(ctx, string(s.Password), domainID, chanID, connections.Subscribe); err != nil {
 			return err
 		}
 	}
@@ -137,41 +169,30 @@ func (h *handler) Publish(ctx context.Context, topic *string, payload *[]byte) e
 		return nil
 	}
 
-	// Topics are in the format:
-	// m/<domain_id>/c/<channel_id>/<subtopic>/.../ct/<content_type>
-	channelParts := channelRegExp.FindStringSubmatch(*topic)
-	if len(channelParts) < 3 {
-		return errMalformedTopic
-	}
-
-	domainID := channelParts[1]
-	chanID := channelParts[2]
-	subtopic := channelParts[3]
-
-	subtopic, err := parseSubtopic(subtopic)
+	domain, channel, subtopic, err := messaging.ParsePublishTopic(*topic)
 	if err != nil {
-		return err
+		return errors.Wrap(errFailedPublish, err)
 	}
-
-	clientID, clientType, err := h.authAccess(ctx, string(s.Password), *topic, connections.Publish)
+	domainID, err := h.resolveDomain(ctx, domain)
 	if err != nil {
-		return err
+		return mgate.NewHTTPProxyError(http.StatusBadRequest, errors.Wrap(errFailedResolveDomain, err))
+	}
+	chanID, err := h.resolveChannel(ctx, channel, domainID)
+	if err != nil {
+		return mgate.NewHTTPProxyError(http.StatusBadRequest, errors.Wrap(errFailedResolveChannel, err))
 	}
 
 	msg := messaging.Message{
-		Protocol: protocol,
-		Domain:   domainID,
-		Channel:  chanID,
-		Subtopic: subtopic,
-		Payload:  *payload,
-		Created:  time.Now().UnixNano(),
+		Protocol:  protocol,
+		Domain:    domainID,
+		Channel:   chanID,
+		Subtopic:  subtopic,
+		Payload:   *payload,
+		Publisher: s.Username,
+		Created:   time.Now().UnixNano(),
 	}
 
-	if clientType == policies.ClientType {
-		msg.Publisher = clientID
-	}
-
-	if err := h.pubsub.Publish(ctx, msg.GetChannel(), &msg); err != nil {
+	if err := h.pubsub.Publish(ctx, messaging.EncodeMessageTopic(&msg), &msg); err != nil {
 		return mgate.NewHTTPProxyError(http.StatusInternalServerError, errors.Wrap(errFailedPublishToMsgBroker, err))
 	}
 
@@ -200,7 +221,7 @@ func (h *handler) Disconnect(ctx context.Context) error {
 	return nil
 }
 
-func (h *handler) authAccess(ctx context.Context, token, topic string, msgType connections.ConnType) (string, string, mgate.HTTPProxyError) {
+func (h *handler) authAccess(ctx context.Context, token, domainID, chanID string, msgType connections.ConnType) (string, string, error) {
 	authnReq := &grpcClientsV1.AuthnReq{
 		ClientSecret: token,
 	}
@@ -217,20 +238,6 @@ func (h *handler) authAccess(ctx context.Context, token, topic string, msgType c
 	}
 	clientType := policies.ClientType
 	clientID := authnRes.GetId()
-
-	// Topics are in the format:
-	// m/<domain_id>/c/<channel_id>/<subtopic>/.../ct/<content_type>
-	if !channelRegExp.MatchString(topic) {
-		return "", "", mgate.NewHTTPProxyError(http.StatusBadRequest, errMalformedTopic)
-	}
-
-	channelParts := channelRegExp.FindStringSubmatch(topic)
-	if len(channelParts) < 3 {
-		return "", "", mgate.NewHTTPProxyError(http.StatusBadRequest, errMalformedTopic)
-	}
-
-	domainID := channelParts[1]
-	chanID := channelParts[2]
 
 	ar := &grpcChannelsV1.AuthzReq{
 		Type:       uint32(msgType),
@@ -250,33 +257,33 @@ func (h *handler) authAccess(ctx context.Context, token, topic string, msgType c
 	return clientID, clientType, nil
 }
 
-func parseSubtopic(subtopic string) (string, mgate.HTTPProxyError) {
-	if subtopic == "" {
-		return subtopic, nil
+func (h *handler) resolveDomain(ctx context.Context, domain string) (string, error) {
+	if api.ValidateUUID(domain) == nil {
+		return domain, nil
 	}
-
-	subtopic, err := url.QueryUnescape(subtopic)
+	d, err := h.domains.RetrieveByRoute(ctx, &grpcCommonV1.RetrieveByRouteReq{
+		Route: domain,
+	})
 	if err != nil {
-		return "", errMalformedSubtopic
-	}
-	subtopic = strings.ReplaceAll(subtopic, "/", ".")
-
-	elems := strings.Split(subtopic, ".")
-	filteredElems := []string{}
-	for _, elem := range elems {
-		if elem == "" {
-			continue
-		}
-
-		if len(elem) > 1 && (strings.Contains(elem, "*") || strings.Contains(elem, ">")) {
-			return "", errMalformedSubtopic
-		}
-
-		filteredElems = append(filteredElems, elem)
+		return "", err
 	}
 
-	subtopic = strings.Join(filteredElems, ".")
-	return subtopic, nil
+	return d.Entity.Id, nil
+}
+
+func (h *handler) resolveChannel(ctx context.Context, channel, domainID string) (string, error) {
+	if api.ValidateUUID(channel) == nil {
+		return channel, nil
+	}
+	c, err := h.channels.RetrieveByRoute(ctx, &grpcCommonV1.RetrieveByRouteReq{
+		Route:    channel,
+		DomainId: domainID,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return c.Entity.Id, nil
 }
 
 // extractClientSecret returns value of the client secret. If there is no client key - an empty value is returned.

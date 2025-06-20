@@ -80,7 +80,8 @@ func (ps *pubsub) Subscribe(ctx context.Context, cfg messaging.SubscriberConfig)
 		return ErrEmptyTopic
 	}
 
-	nh := ps.natsHandler(cfg.Handler, cfg.AckErr)
+	// nolint:contextcheck
+	nh := ps.natsHandler(cfg.Handler)
 
 	consumerConfig := jetstream.ConsumerConfig{
 		Name:          formatConsumerName(cfg.Topic, cfg.ID),
@@ -130,25 +131,76 @@ func (ps *pubsub) Unsubscribe(ctx context.Context, id, topic string) error {
 	}
 }
 
-func (ps *pubsub) natsHandler(h messaging.MessageHandler, ackErr bool) func(m jetstream.Msg) {
+func (ps *pubsub) natsHandler(h messaging.MessageHandler) func(m jetstream.Msg) {
 	return func(m jetstream.Msg) {
+		args := []any{
+			slog.String("subject", m.Subject()),
+		}
+		meta, err := m.Metadata()
+		switch err {
+		case nil:
+			args = append(args,
+				slog.String("stream", meta.Stream),
+				slog.String("consumer", meta.Consumer),
+				slog.Uint64("stream_seq", meta.Sequence.Stream),
+				slog.Uint64("consumer_seq", meta.Sequence.Consumer),
+			)
+		default:
+			args = append(args,
+				slog.String("metadata_error", err.Error()),
+			)
+		}
+
 		var msg messaging.Message
 		if err := proto.Unmarshal(m.Data(), &msg); err != nil {
-			ps.logger.Warn(fmt.Sprintf("Failed to unmarshal received message: %s", err))
+			ackType := messaging.Term
+			args = append(args, slog.String("ack_type", ackType.String()), slog.String("error", err.Error()))
+			ps.logger.Warn("failed to unmarshal message", args...)
+			ps.handleAck(ackType, m)
 			return
 		}
 
-		if err := h.Handle(&msg); err != nil {
-			ps.logger.Warn(fmt.Sprintf("Failed to handle SuperMQ message: %s", err))
-			if ackErr {
-				if err := m.Ack(); err != nil {
-					ps.logger.Warn(fmt.Sprintf("Failed to ack message: %s", err))
-				}
-			}
-			return
+		err = h.Handle(&msg)
+		ackType := ps.errAckType(err)
+		if err != nil {
+			args = append(args, slog.String("ack_type", ackType.String()), slog.String("error", err.Error()))
+			ps.logger.Warn("failed to handle message", args...)
 		}
+		ps.handleAck(ackType, m)
+	}
+}
+
+func (ps *pubsub) errAckType(err error) messaging.AckType {
+	if err == nil {
+		return messaging.Ack
+	}
+	if e, ok := err.(messaging.Error); ok && e != nil {
+		return e.Ack()
+	}
+	return messaging.NoAck
+}
+
+func (ps *pubsub) handleAck(at messaging.AckType, m jetstream.Msg) {
+	switch at {
+	case messaging.Ack:
 		if err := m.Ack(); err != nil {
-			ps.logger.Warn(fmt.Sprintf("Failed to ack message: %s", err))
+			ps.logger.Warn(fmt.Sprintf("failed to ack message: %s", err))
+		}
+	case messaging.DoubleAck:
+		if err := m.DoubleAck(context.Background()); err != nil {
+			ps.logger.Warn(fmt.Sprintf("failed to double ack message: %s", err))
+		}
+	case messaging.Nack:
+		if err := m.Nak(); err != nil {
+			ps.logger.Warn(fmt.Sprintf("failed to negatively ack message: %s", err))
+		}
+	case messaging.InProgress:
+		if err := m.InProgress(); err != nil {
+			ps.logger.Warn(fmt.Sprintf("failed to set message in progress: %s", err))
+		}
+	case messaging.Term:
+		if err := m.Term(); err != nil {
+			ps.logger.Warn(fmt.Sprintf("failed to terminate message: %s", err))
 		}
 	}
 }

@@ -67,11 +67,11 @@ func (e EntityType) Query() string {
 	case UserEntity:
 		return "((operation LIKE 'user.%' AND attributes->>'id' = :entity_id) OR (attributes->>'user_id' = :entity_id))"
 	case GroupEntity:
-		return "((operation LIKE 'group.%' AND attributes->>'id' = :entity_id) OR (attributes->>'group_id' = :entity_id))"
+		return "((operation LIKE 'group.%' AND (attributes->>'id' = :entity_id OR attributes->>'entity_id' = :entity_id))"
 	case ChannelEntity:
-		return "((operation LIKE 'channel.%' AND attributes->>'id' = :entity_id) OR (attributes->>'channel_id' = :entity_id) OR (jsonb_exists_any(attributes->'channel_ids', array[:entity_id])))"
+		return "((operation LIKE 'channel.%' AND (attributes->>'id' = :entity_id OR attributes->>'entity_id' = :entity_id)) OR (jsonb_exists_any(attributes->'channel_ids', array[:entity_id])))"
 	case ClientEntity:
-		return "((operation LIKE 'client.%' AND attributes->>'id' = :entity_id) OR (attributes->>'client_id' = :entity_id))"
+		return "((operation LIKE 'client.%' AND (attributes->>'id' = :entity_id OR attributes->>'entity_id' = :entity_id)) OR (jsonb_exists_any(attributes->'client_ids', array[:entity_id])))"
 	default:
 		return ""
 	}
@@ -181,7 +181,7 @@ type Repository interface {
 	RemoveSubscription(ctx context.Context, subscriberID string) error
 
 	// IncrementInboundMessages increments the inbound messages count for a client.
-	IncrementInboundMessages(ctx context.Context, clientID string) error
+	IncrementInboundMessages(ctx context.Context, ct ClientTelemetry) error
 
 	// IncrementOutboundMessages increments the outbound messages count for a client.
 	IncrementOutboundMessages(ctx context.Context, channelID, subtopic string) error

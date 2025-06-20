@@ -61,7 +61,7 @@ func (svc service) CreateDomain(ctx context.Context, session authn.Session, d Do
 		return Domain{}, []roles.RoleProvision{}, svcerr.ErrInvalidStatus
 	}
 
-	d.CreatedAt = time.Now()
+	d.CreatedAt = time.Now().UTC()
 
 	// Domain is created in repo first, because Roles table have foreign key relation with Domain ID
 	dom, err := svc.repo.SaveDomain(ctx, d)
@@ -119,7 +119,7 @@ func (svc service) RetrieveDomain(ctx context.Context, session authn.Session, id
 }
 
 func (svc service) UpdateDomain(ctx context.Context, session authn.Session, id string, d DomainReq) (Domain, error) {
-	updatedAt := time.Now()
+	updatedAt := time.Now().UTC()
 	d.UpdatedAt = &updatedAt
 	d.UpdatedBy = &session.UserID
 	dom, err := svc.repo.UpdateDomain(ctx, id, d)
@@ -131,12 +131,12 @@ func (svc service) UpdateDomain(ctx context.Context, session authn.Session, id s
 
 func (svc service) EnableDomain(ctx context.Context, session authn.Session, id string) (Domain, error) {
 	status := EnabledStatus
-	updatedAt := time.Now()
+	updatedAt := time.Now().UTC()
 	dom, err := svc.repo.UpdateDomain(ctx, id, DomainReq{Status: &status, UpdatedBy: &session.UserID, UpdatedAt: &updatedAt})
 	if err != nil {
 		return Domain{}, errors.Wrap(svcerr.ErrUpdateEntity, err)
 	}
-	if err := svc.cache.Remove(ctx, id); err != nil {
+	if err := svc.cache.RemoveStatus(ctx, id); err != nil {
 		return dom, errors.Wrap(svcerr.ErrRemoveEntity, err)
 	}
 
@@ -145,12 +145,12 @@ func (svc service) EnableDomain(ctx context.Context, session authn.Session, id s
 
 func (svc service) DisableDomain(ctx context.Context, session authn.Session, id string) (Domain, error) {
 	status := DisabledStatus
-	updatedAt := time.Now()
+	updatedAt := time.Now().UTC()
 	dom, err := svc.repo.UpdateDomain(ctx, id, DomainReq{Status: &status, UpdatedBy: &session.UserID, UpdatedAt: &updatedAt})
 	if err != nil {
 		return Domain{}, errors.Wrap(svcerr.ErrUpdateEntity, err)
 	}
-	if err := svc.cache.Remove(ctx, id); err != nil {
+	if err := svc.cache.RemoveStatus(ctx, id); err != nil {
 		return dom, errors.Wrap(svcerr.ErrRemoveEntity, err)
 	}
 
@@ -160,12 +160,12 @@ func (svc service) DisableDomain(ctx context.Context, session authn.Session, id 
 // Only SuperAdmin can freeze the domain.
 func (svc service) FreezeDomain(ctx context.Context, session authn.Session, id string) (Domain, error) {
 	status := FreezeStatus
-	updatedAt := time.Now()
+	updatedAt := time.Now().UTC()
 	dom, err := svc.repo.UpdateDomain(ctx, id, DomainReq{Status: &status, UpdatedBy: &session.UserID, UpdatedAt: &updatedAt})
 	if err != nil {
 		return Domain{}, errors.Wrap(svcerr.ErrUpdateEntity, err)
 	}
-	if err := svc.cache.Remove(ctx, id); err != nil {
+	if err := svc.cache.RemoveStatus(ctx, id); err != nil {
 		return dom, errors.Wrap(svcerr.ErrRemoveEntity, err)
 	}
 
@@ -190,12 +190,37 @@ func (svc *service) SendInvitation(ctx context.Context, session authn.Session, i
 		return errors.Wrap(svcerr.ErrInvalidRole, err)
 	}
 	invitation.InvitedBy = session.UserID
+	invitation.CreatedAt = time.Now().UTC()
 
-	invitation.CreatedAt = time.Now()
+	if invitation.Resend {
+		if err := svc.resendInvitation(ctx, invitation); err != nil {
+			return errors.Wrap(svcerr.ErrUpdateEntity, err)
+		}
+		return nil
+	}
 
 	if err := svc.repo.SaveInvitation(ctx, invitation); err != nil {
 		return errors.Wrap(svcerr.ErrCreateEntity, err)
 	}
+	return nil
+}
+
+func (svc *service) resendInvitation(ctx context.Context, invitation Invitation) error {
+	inv, err := svc.repo.RetrieveInvitation(ctx, invitation.InviteeUserID, invitation.DomainID)
+	if err != nil {
+		return err
+	}
+	if !inv.ConfirmedAt.IsZero() {
+		return svcerr.ErrInvitationAlreadyAccepted
+	}
+	if !inv.RejectedAt.IsZero() {
+		invitation.RejectedAt = time.Time{}
+		invitation.UpdatedAt = time.Now().UTC()
+		if err := svc.repo.UpdateRejection(ctx, invitation); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -250,7 +275,7 @@ func (svc *service) AcceptInvitation(ctx context.Context, session authn.Session,
 		return Invitation{}, errors.Wrap(svcerr.ErrUpdateEntity, err)
 	}
 
-	inv.ConfirmedAt = time.Now()
+	inv.ConfirmedAt = time.Now().UTC()
 	inv.UpdatedAt = inv.ConfirmedAt
 
 	if err := svc.repo.UpdateConfirmation(ctx, inv); err != nil {
@@ -278,7 +303,7 @@ func (svc *service) RejectInvitation(ctx context.Context, session authn.Session,
 		return svcerr.ErrInvitationAlreadyRejected
 	}
 
-	inv.RejectedAt = time.Now()
+	inv.RejectedAt = time.Now().UTC()
 	inv.UpdatedAt = inv.RejectedAt
 
 	if err := svc.repo.UpdateRejection(ctx, inv); err != nil {
@@ -301,11 +326,12 @@ func (svc *service) DeleteInvitation(ctx context.Context, session authn.Session,
 		return errors.Wrap(svcerr.ErrRemoveEntity, err)
 	}
 
-	if inv.InvitedBy == session.UserID {
-		if err := svc.repo.DeleteInvitation(ctx, inviteeUserID, domainID); err != nil {
-			return errors.Wrap(svcerr.ErrRemoveEntity, err)
-		}
-		return nil
+	if !inv.ConfirmedAt.IsZero() {
+		return errors.Wrap(svcerr.ErrRemoveEntity, svcerr.ErrInvitationAlreadyAccepted)
+	}
+
+	if !inv.RejectedAt.IsZero() {
+		return errors.Wrap(svcerr.ErrRemoveEntity, svcerr.ErrInvitationAlreadyRejected)
 	}
 
 	if err := svc.repo.DeleteInvitation(ctx, inviteeUserID, domainID); err != nil {
@@ -325,15 +351,40 @@ func (svc *service) RemoveEntityMembers(ctx context.Context, session authn.Sessi
 	return svc.ProvisionManageService.RemoveEntityMembers(ctx, session, entityID, members)
 }
 
-func (svc *service) RoleRemoveMembers(ctx context.Context, session authn.Session, entityID, roleID string, members []string) (err error) {
-	for _, member := range members {
-		if err := svc.repo.DeleteInvitation(ctx, member, entityID); err != nil && err != repoerr.ErrNotFound {
+func (svc *service) RoleRemoveMembers(ctx context.Context, session authn.Session, entityID, roleID string, members []string) error {
+	ro, err := svc.repo.RetrieveEntityRole(ctx, entityID, roleID)
+	if err != nil {
+		return errors.Wrap(svcerr.ErrViewEntity, err)
+	}
+
+	if _, err := svc.ProvisionManageService.BuiltInRoleActions(roles.BuiltInRoleName(ro.Name)); err == nil {
+		membersPage, err := svc.repo.RoleListMembers(ctx, ro.ID, 0, 0)
+		if err != nil {
+			return errors.Wrap(svcerr.ErrViewEntity, err)
+		}
+		if membersPage.Total <= uint64(len(members)) {
+			return svcerr.ErrRetainOneMember
+		}
+	}
+
+	for _, memberID := range members {
+		if err := svc.repo.DeleteInvitation(ctx, memberID, entityID); err != nil && err != repoerr.ErrNotFound {
 			return err
 		}
 	}
+
 	return svc.ProvisionManageService.RoleRemoveMembers(ctx, session, entityID, roleID, members)
 }
 
-func (svc *service) RoleRemoveAllMembers(ctx context.Context, session authn.Session, entityID, roleID string) (err error) {
-	return svcerr.ErrNotFound
+func (svc *service) RoleRemoveAllMembers(ctx context.Context, session authn.Session, entityID, roleID string) error {
+	ro, err := svc.repo.RetrieveEntityRole(ctx, entityID, roleID)
+	if err != nil {
+		return errors.Wrap(svcerr.ErrViewEntity, err)
+	}
+
+	if _, err := svc.ProvisionManageService.BuiltInRoleActions(roles.BuiltInRoleName(ro.Name)); err == nil {
+		return svcerr.ErrRetainOneMember
+	}
+
+	return svc.ProvisionManageService.RoleRemoveAllMembers(ctx, session, entityID, roleID)
 }

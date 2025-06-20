@@ -411,7 +411,7 @@ func TestEnableDomain(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			repoCall := drepo.On("UpdateDomain", context.Background(), tc.domainID, mock.Anything).Return(tc.enableRes, tc.enableErr)
-			cacheCall := dcache.On("Remove", context.Background(), tc.domainID).Return(tc.cacheErr)
+			cacheCall := dcache.On("RemoveStatus", context.Background(), tc.domainID).Return(tc.cacheErr)
 			domain, err := svc.EnableDomain(context.Background(), tc.session, tc.domainID)
 			assert.True(t, errors.Contains(err, tc.err))
 			assert.Equal(t, tc.resp, domain)
@@ -475,7 +475,7 @@ func TestDisableDomain(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			repoCall := drepo.On("UpdateDomain", context.Background(), tc.domainID, mock.Anything).Return(tc.disableRes, tc.disableErr)
-			cacheCall := dcache.On("Remove", context.Background(), tc.domainID).Return(tc.cacheErr)
+			cacheCall := dcache.On("RemoveStatus", context.Background(), tc.domainID).Return(tc.cacheErr)
 			domain, err := svc.DisableDomain(context.Background(), tc.session, tc.domainID)
 			assert.True(t, errors.Contains(err, tc.err))
 			assert.Equal(t, tc.disableRes, domain)
@@ -539,7 +539,7 @@ func TestFreezeDomain(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			repoCall := drepo.On("UpdateDomain", context.Background(), tc.domainID, mock.Anything).Return(tc.freezeRes, tc.freezeErr)
-			cacheCall := dcache.On("Remove", context.Background(), tc.domainID).Return(tc.cacheErr)
+			cacheCall := dcache.On("RemoveStatus", context.Background(), tc.domainID).Return(tc.cacheErr)
 			domain, err := svc.FreezeDomain(context.Background(), tc.session, tc.domainID)
 			assert.True(t, errors.Contains(err, tc.err))
 			assert.Equal(t, tc.freezeRes, domain)
@@ -625,12 +625,22 @@ func TestListDomains(t *testing.T) {
 func TestSendInvitation(t *testing.T) {
 	svc := newService()
 
+	rejectedInvitation := validInvitation
+	rejectedInvitation.RejectedAt = time.Now()
+	acceptedInvitation := validInvitation
+	acceptedInvitation.ConfirmedAt = time.Now()
+	resentInvitation := validInvitation
+	resentInvitation.Resend = true
+
 	cases := []struct {
 		desc                string
 		session             authn.Session
 		req                 domains.Invitation
 		retrieveRoleErr     error
 		createInvitationErr error
+		retrieveInvRes      domains.Invitation
+		retrieveInvErr      error
+		updateRejectionErr  error
 		err                 error
 	}{
 		{
@@ -657,16 +667,44 @@ func TestSendInvitation(t *testing.T) {
 			createInvitationErr: repoerr.ErrCreateEntity,
 			err:                 svcerr.ErrCreateEntity,
 		},
+		{
+			desc:           "resend invitation successfully",
+			session:        validSession,
+			req:            resentInvitation,
+			retrieveInvRes: rejectedInvitation,
+			retrieveInvErr: nil,
+			err:            nil,
+		},
+		{
+			desc:           "resend invitation with failed to retrieve invitation",
+			session:        validSession,
+			req:            resentInvitation,
+			retrieveInvRes: domains.Invitation{},
+			retrieveInvErr: repoerr.ErrNotFound,
+			err:            svcerr.ErrUpdateEntity,
+		},
+		{
+			desc:           "resend an invitation that is already accepted",
+			session:        validSession,
+			req:            resentInvitation,
+			retrieveInvRes: acceptedInvitation,
+			retrieveInvErr: nil,
+			err:            svcerr.ErrUpdateEntity,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			repoCall := drepo.On("RetrieveRole", context.Background(), tc.req.RoleID).Return(roles.Role{}, tc.retrieveRoleErr)
 			repoCall1 := drepo.On("SaveInvitation", context.Background(), mock.Anything).Return(tc.createInvitationErr)
+			repoCall2 := drepo.On("RetrieveInvitation", context.Background(), tc.req.InviteeUserID, tc.req.DomainID).Return(tc.retrieveInvRes, tc.retrieveInvErr)
+			repoCall3 := drepo.On("UpdateRejection", context.Background(), mock.Anything).Return(tc.updateRejectionErr)
 			err := svc.SendInvitation(context.Background(), tc.session, tc.req)
 			assert.True(t, errors.Contains(err, tc.err))
 			repoCall.Unset()
 			repoCall1.Unset()
+			repoCall2.Unset()
+			repoCall3.Unset()
 		})
 	}
 }
@@ -1009,10 +1047,16 @@ func TestRejectInvitation(t *testing.T) {
 func TestDeleteInvitation(t *testing.T) {
 	svc := newService()
 
+	acceptedInv := validInvitation
+	acceptedInv.ConfirmedAt = time.Now()
+	rejectedInv := validInvitation
+	rejectedInv.RejectedAt = time.Now()
+
 	cases := []struct {
 		desc                  string
 		userID                string
 		domainID              string
+		session               authn.Session
 		resp                  domains.Invitation
 		retrieveInvitationErr error
 		deleteInvitationErr   error
@@ -1022,6 +1066,7 @@ func TestDeleteInvitation(t *testing.T) {
 			desc:     "delete invitations successful",
 			userID:   testsutil.GenerateUUID(t),
 			domainID: testsutil.GenerateUUID(t),
+			session:  validSession,
 			resp:     validInvitation,
 			err:      nil,
 		},
@@ -1030,19 +1075,38 @@ func TestDeleteInvitation(t *testing.T) {
 			userID:   validInvitation.InviteeUserID,
 			domainID: validInvitation.DomainID,
 			resp:     validInvitation,
+			session:  authn.Session{UserID: validInvitation.InviteeUserID},
 			err:      nil,
 		},
 		{
 			desc:     "delete invitations for the invited user",
 			userID:   validInvitation.InviteeUserID,
 			domainID: validInvitation.DomainID,
+			session:  validSession,
 			resp:     validInvitation,
 			err:      nil,
+		},
+		{
+			desc:     "delete accepted invitation as non invitee user",
+			userID:   validID,
+			domainID: validInvitation.DomainID,
+			session:  validSession,
+			resp:     acceptedInv,
+			err:      svcerr.ErrInvitationAlreadyAccepted,
+		},
+		{
+			desc:     "delete rejected invitation as non invitee user",
+			userID:   validID,
+			domainID: validInvitation.DomainID,
+			session:  validSession,
+			resp:     rejectedInv,
+			err:      svcerr.ErrInvitationAlreadyRejected,
 		},
 		{
 			desc:                  "delete invitation with error retrieving invitation",
 			userID:                validInvitation.InviteeUserID,
 			domainID:              validInvitation.DomainID,
+			session:               validSession,
 			resp:                  domains.Invitation{},
 			retrieveInvitationErr: repoerr.ErrNotFound,
 			err:                   svcerr.ErrRemoveEntity,
@@ -1051,6 +1115,7 @@ func TestDeleteInvitation(t *testing.T) {
 			desc:                "delete invitation with error deleting invitation",
 			userID:              validInvitation.InviteeUserID,
 			domainID:            validInvitation.DomainID,
+			session:             validSession,
 			resp:                domains.Invitation{},
 			deleteInvitationErr: repoerr.ErrNotFound,
 			err:                 svcerr.ErrRemoveEntity,
@@ -1061,7 +1126,7 @@ func TestDeleteInvitation(t *testing.T) {
 		t.Run(tc.desc, func(t *testing.T) {
 			repoCall := drepo.On("RetrieveInvitation", context.Background(), mock.Anything, mock.Anything).Return(tc.resp, tc.retrieveInvitationErr)
 			repoCall1 := drepo.On("DeleteInvitation", context.Background(), mock.Anything, mock.Anything).Return(tc.deleteInvitationErr)
-			err := svc.DeleteInvitation(context.Background(), authn.Session{}, tc.userID, tc.domainID)
+			err := svc.DeleteInvitation(context.Background(), tc.session, tc.userID, tc.domainID)
 			assert.True(t, errors.Contains(err, tc.err))
 			repoCall.Unset()
 			repoCall1.Unset()

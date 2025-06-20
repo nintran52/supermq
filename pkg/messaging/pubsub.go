@@ -3,7 +3,10 @@
 
 package messaging
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type DeliveryPolicy uint8
 
@@ -15,6 +18,38 @@ const (
 	// DeliverAllPolicy starts delivering messages from the very beginning of a stream.
 	DeliverAllPolicy
 )
+
+// AckType is used for message acknowledgement.
+// It can be used for both successful and unsuccessful handling.
+type AckType int
+
+const (
+	Ack        AckType = iota // regular acknowledgement
+	DoubleAck                 // double ack in case of guaranteed delivery
+	Nack                      // negative Ack
+	InProgress                // restart delivery timer
+	Term                      // terminate
+	NoAck                     // do nothing
+)
+
+func (a AckType) String() string {
+	switch a {
+	case Ack:
+		return "Ack"
+	case DoubleAck:
+		return "DoubleAck"
+	case Nack:
+		return "Nack"
+	case InProgress:
+		return "InProgress"
+	case Term:
+		return "Term"
+	case NoAck:
+		return "NoAck"
+	default:
+		return fmt.Sprintf("Unknown AckType(%d)", a)
+	}
+}
 
 // Publisher specifies message publishing API.
 type Publisher interface {
@@ -34,14 +69,14 @@ type MessageHandler interface {
 	Cancel() error
 }
 
+// SubscriberConfig defines the configuration for a subscriber that processes messages from a topic.
 type SubscriberConfig struct {
-	ID             string
-	ClientID       string
-	Topic          string
-	Handler        MessageHandler
-	DeliveryPolicy DeliveryPolicy
-	Ordered        bool
-	AckErr         bool
+	ID             string         // Unique identifier for the subscriber.
+	ClientID       string         // Identifier of the client associated with this subscriber.
+	Topic          string         // Topic to subscribe to.
+	Handler        MessageHandler // Function that handles incoming messages.
+	DeliveryPolicy DeliveryPolicy // DeliverPolicy defines from which point to start delivering messages.
+	Ordered        bool           // Whether message delivery must preserve order.
 }
 
 // Subscriber specifies message subscription API.

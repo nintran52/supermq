@@ -113,6 +113,7 @@ func convertGroup(g sdk.Group) groups.Group {
 		Parent:                    g.ParentID,
 		Name:                      g.Name,
 		Description:               g.Description,
+		Tags:                      g.Tags,
 		Metadata:                  groups.Metadata(g.Metadata),
 		Level:                     g.Level,
 		Path:                      g.Path,
@@ -133,7 +134,7 @@ func convertGroup(g sdk.Group) groups.Group {
 }
 
 func convertChildren(gs []*sdk.Group) []*groups.Group {
-	cg := []*groups.Group{}
+	var cg []*groups.Group
 
 	if len(gs) == 0 {
 		return cg
@@ -212,6 +213,7 @@ func convertChannel(g sdk.Channel) mgchannels.Channel {
 		Name:        g.Name,
 		Tags:        g.Tags,
 		ParentGroup: g.ParentGroup,
+		Route:       g.Route,
 		Domain:      g.DomainID,
 		Metadata:    channels.Metadata(g.Metadata),
 		CreatedAt:   g.CreatedAt,

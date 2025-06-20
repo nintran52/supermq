@@ -30,6 +30,7 @@ var (
 
 type service struct {
 	repo       Repository
+	cache      Cache
 	policy     policies.Service
 	idProvider supermq.IDProvider
 	clients    grpcClientsV1.ClientsServiceClient
@@ -39,7 +40,7 @@ type service struct {
 
 var _ Service = (*service)(nil)
 
-func New(repo Repository, policy policies.Service, idProvider supermq.IDProvider, clients grpcClientsV1.ClientsServiceClient, groups grpcGroupsV1.GroupsServiceClient, sidProvider supermq.IDProvider, availableActions []roles.Action, builtInRoles map[roles.BuiltInRoleName][]roles.Action) (Service, error) {
+func New(repo Repository, cache Cache, policy policies.Service, idProvider supermq.IDProvider, clients grpcClientsV1.ClientsServiceClient, groups grpcGroupsV1.GroupsServiceClient, sidProvider supermq.IDProvider, availableActions []roles.Action, builtInRoles map[roles.BuiltInRoleName][]roles.Action) (Service, error) {
 	rpms, err := roles.NewProvisionManageService(policies.ChannelType, repo, policy, sidProvider, availableActions, builtInRoles)
 	if err != nil {
 		return nil, err
@@ -47,6 +48,7 @@ func New(repo Repository, policy policies.Service, idProvider supermq.IDProvider
 
 	return service{
 		repo:                   repo,
+		cache:                  cache,
 		policy:                 policy,
 		idProvider:             idProvider,
 		clients:                clients,
@@ -70,7 +72,7 @@ func (svc service) CreateChannels(ctx context.Context, session authn.Session, ch
 			return []Channel{}, []roles.RoleProvision{}, svcerr.ErrInvalidStatus
 		}
 		c.Domain = session.DomainID
-		c.CreatedAt = time.Now()
+		c.CreatedAt = time.Now().UTC()
 		reChs = append(reChs, c)
 	}
 
@@ -120,7 +122,7 @@ func (svc service) UpdateChannel(ctx context.Context, session authn.Session, ch 
 		ID:        ch.ID,
 		Name:      ch.Name,
 		Metadata:  ch.Metadata,
-		UpdatedAt: time.Now(),
+		UpdatedAt: time.Now().UTC(),
 		UpdatedBy: session.UserID,
 	}
 	channel, err := svc.repo.Update(ctx, channel)
@@ -134,7 +136,7 @@ func (svc service) UpdateChannelTags(ctx context.Context, session authn.Session,
 	channel := Channel{
 		ID:        ch.ID,
 		Tags:      ch.Tags,
-		UpdatedAt: time.Now(),
+		UpdatedAt: time.Now().UTC(),
 		UpdatedBy: session.UserID,
 	}
 	channel, err := svc.repo.UpdateTags(ctx, channel)
@@ -148,7 +150,7 @@ func (svc service) EnableChannel(ctx context.Context, session authn.Session, id 
 	channel := Channel{
 		ID:        id,
 		Status:    EnabledStatus,
-		UpdatedAt: time.Now(),
+		UpdatedAt: time.Now().UTC(),
 	}
 	ch, err := svc.changeChannelStatus(ctx, session.UserID, channel)
 	if err != nil {
@@ -162,7 +164,7 @@ func (svc service) DisableChannel(ctx context.Context, session authn.Session, id
 	channel := Channel{
 		ID:        id,
 		Status:    DisabledStatus,
-		UpdatedAt: time.Now(),
+		UpdatedAt: time.Now().UTC(),
 	}
 	ch, err := svc.changeChannelStatus(ctx, session.UserID, channel)
 	if err != nil {
@@ -226,6 +228,11 @@ func (svc service) RemoveChannel(ctx context.Context, session authn.Session, id 
 	ch, err := svc.repo.ChangeStatus(ctx, Channel{ID: id, Status: DeletedStatus})
 	if err != nil {
 		return errors.Wrap(svcerr.ErrRemoveEntity, err)
+	}
+	if ch.Route != "" {
+		if err := svc.cache.Remove(ctx, ch.Route, ch.Domain); err != nil {
+			return errors.Wrap(svcerr.ErrRemoveEntity, err)
+		}
 	}
 
 	deletePolicies := []policies.Policy{
@@ -432,7 +439,7 @@ func (svc service) SetParentGroup(ctx context.Context, session authn.Session, pa
 			}
 		}
 	}()
-	ch = Channel{ID: id, ParentGroup: parentGroupID, UpdatedBy: session.UserID, UpdatedAt: time.Now()}
+	ch = Channel{ID: id, ParentGroup: parentGroupID, UpdatedBy: session.UserID, UpdatedAt: time.Now().UTC()}
 
 	if err := svc.repo.SetParentGroup(ctx, ch); err != nil {
 		return errors.Wrap(svcerr.ErrUpdateEntity, err)
@@ -468,7 +475,7 @@ func (svc service) RemoveParentGroup(ctx context.Context, session authn.Session,
 			}
 		}()
 
-		ch := Channel{ID: id, UpdatedBy: session.UserID, UpdatedAt: time.Now()}
+		ch := Channel{ID: id, UpdatedBy: session.UserID, UpdatedAt: time.Now().UTC()}
 
 		if err := svc.repo.RemoveParentGroup(ctx, ch); err != nil {
 			return err

@@ -57,7 +57,7 @@ func (svc service) CreateGroup(ctx context.Context, session smqauthn.Session, g 
 	}
 
 	g.ID = groupID
-	g.CreatedAt = time.Now()
+	g.CreatedAt = time.Now().UTC()
 	g.Domain = session.DomainID
 
 	saved, err := svc.repo.Save(ctx, g)
@@ -148,10 +148,24 @@ func (svc service) ListUserGroups(ctx context.Context, session smqauthn.Session,
 }
 
 func (svc service) UpdateGroup(ctx context.Context, session smqauthn.Session, g Group) (Group, error) {
-	g.UpdatedAt = time.Now()
+	g.UpdatedAt = time.Now().UTC()
 	g.UpdatedBy = session.UserID
 
 	group, err := svc.repo.Update(ctx, g)
+	if err != nil {
+		return Group{}, errors.Wrap(svcerr.ErrUpdateEntity, err)
+	}
+	return group, nil
+}
+
+func (svc service) UpdateGroupTags(ctx context.Context, session smqauthn.Session, g Group) (Group, error) {
+	group := Group{
+		ID:        g.ID,
+		Tags:      g.Tags,
+		UpdatedAt: time.Now(),
+		UpdatedBy: session.UserID,
+	}
+	group, err := svc.repo.UpdateTags(ctx, group)
 	if err != nil {
 		return Group{}, errors.Wrap(svcerr.ErrUpdateEntity, err)
 	}
@@ -162,7 +176,7 @@ func (svc service) EnableGroup(ctx context.Context, session smqauthn.Session, id
 	group := Group{
 		ID:        id,
 		Status:    EnabledStatus,
-		UpdatedAt: time.Now(),
+		UpdatedAt: time.Now().UTC(),
 	}
 	group, err := svc.changeGroupStatus(ctx, session, group)
 	if err != nil {
@@ -175,7 +189,7 @@ func (svc service) DisableGroup(ctx context.Context, session smqauthn.Session, i
 	group := Group{
 		ID:        id,
 		Status:    DisabledStatus,
-		UpdatedAt: time.Now(),
+		UpdatedAt: time.Now().UTC(),
 	}
 	group, err := svc.changeGroupStatus(ctx, session, group)
 	if err != nil {

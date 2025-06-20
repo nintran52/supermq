@@ -36,8 +36,9 @@ var (
 	idProvider   = uuid.New()
 	namegen      = namegenerator.NewGenerator()
 	validChannel = channels.Channel{
-		ID:   testsutil.GenerateUUID(&testing.T{}),
-		Name: namegen.Generate(),
+		ID:    testsutil.GenerateUUID(&testing.T{}),
+		Name:  namegen.Generate(),
+		Route: namegen.Generate(),
 		Metadata: map[string]interface{}{
 			"key": "value",
 		},
@@ -46,8 +47,9 @@ var (
 		Status: channels.EnabledStatus,
 	}
 	validChannelWithRoles = channels.Channel{
-		ID:   testsutil.GenerateUUID(&testing.T{}),
-		Name: namegen.Generate(),
+		ID:    testsutil.GenerateUUID(&testing.T{}),
+		Name:  namegen.Generate(),
+		Route: namegen.Generate(),
 		Metadata: map[string]interface{}{
 			"key": "value",
 		},
@@ -69,6 +71,7 @@ var (
 
 var (
 	repo       *mocks.Repository
+	cache      *mocks.Cache
 	policies   *policymocks.Service
 	clientsSvc *clmocks.ClientsServiceClient
 	groupsSvc  *gpmocks.GroupsServiceClient
@@ -76,6 +79,7 @@ var (
 
 func newService(t *testing.T) channels.Service {
 	repo = new(mocks.Repository)
+	cache = new(mocks.Cache)
 	policies = new(policymocks.Service)
 	clientsSvc = new(clmocks.ClientsServiceClient)
 	groupsSvc = new(gpmocks.GroupsServiceClient)
@@ -83,13 +87,16 @@ func newService(t *testing.T) channels.Service {
 	builtInRoles := map[roles.BuiltInRoleName][]roles.Action{
 		channels.BuiltInRoleAdmin: availableActions,
 	}
-	svc, err := channels.New(repo, policies, idProvider, clientsSvc, groupsSvc, idProvider, availableActions, builtInRoles)
+	svc, err := channels.New(repo, cache, policies, idProvider, clientsSvc, groupsSvc, idProvider, availableActions, builtInRoles)
 	assert.Nil(t, err, fmt.Sprintf(" Unexpected error  while creating service %v", err))
 	return svc
 }
 
 func TestCreateChannel(t *testing.T) {
 	svc := newService(t)
+
+	etChan := validChannel
+	etChan.Route = ""
 
 	cases := []struct {
 		desc              string
@@ -292,8 +299,9 @@ func TestUpdateChannel(t *testing.T) {
 		{
 			desc: "update channel successfully",
 			channel: channels.Channel{
-				ID:   testsutil.GenerateUUID(t),
-				Name: namegen.Generate(),
+				ID:    testsutil.GenerateUUID(t),
+				Name:  namegen.Generate(),
+				Route: namegen.Generate(),
 			},
 			repoResp: validChannel,
 		},
@@ -766,6 +774,7 @@ func TestRemoveChannel(t *testing.T) {
 			repoCall := repo.On("DoesChannelHaveConnections", context.Background(), validChannel.ID).Return(tc.connectionsRes, tc.connectionsErr)
 			clientsCall := clientsSvc.On("RemoveChannelConnections", context.Background(), &grpcClientsV1.RemoveChannelConnectionsReq{ChannelId: tc.id}).Return(&grpcClientsV1.RemoveChannelConnectionsRes{}, tc.removeConnectionsErr)
 			repoCall1 := repo.On("ChangeStatus", context.Background(), channels.Channel{ID: tc.id, Status: channels.DeletedStatus}).Return(tc.changeStatusRes, tc.changeStatusErr)
+			cacheCall := cache.On("Remove", context.Background(), tc.changeStatusRes.Route, tc.changeStatusRes.Domain).Return(nil)
 			repoCall2 := repo.On("RetrieveEntitiesRolesActionsMembers", context.Background(), []string{tc.id}).Return([]roles.EntityActionRole{}, []roles.EntityMemberRole{}, nil)
 			policyCall := policies.On("DeletePolicies", context.Background(), mock.Anything).Return(tc.deletePoliciesErr)
 			policyCall1 := policies.On("DeletePolicyFilter", context.Background(), mock.Anything).Return(tc.deletePolicyFilterErr)
@@ -779,6 +788,7 @@ func TestRemoveChannel(t *testing.T) {
 			policyCall1.Unset()
 			repoCall2.Unset()
 			repoCall3.Unset()
+			cacheCall.Unset()
 		})
 	}
 }

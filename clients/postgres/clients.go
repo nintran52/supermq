@@ -870,7 +870,7 @@ func (repo *clientRepo) userClientBaseQuery(domainID, userID string) string {
 			dc.updated_at,
 			dc.updated_by,
 			dc.status,
-			text2ltree('') AS parent_group_path,
+			g."path" AS parent_group_path,
 			'' AS role_id,
 			'' AS role_name,
 			array[]::::text[] AS actions,
@@ -889,6 +889,8 @@ func (repo *clientRepo) userClientBaseQuery(domainID, userID string) string {
 			domains d ON d.id = dr.entity_id
 		JOIN
 			clients dc ON dc.domain_id = d.id
+		LEFT JOIN
+			groups g ON dc.parent_group_id = g.id
 		WHERE
 			drm.member_id = '%s' -- user_id
 			 AND d.id = '%s' -- domain_id
@@ -898,7 +900,7 @@ func (repo *clientRepo) userClientBaseQuery(domainID, userID string) string {
 				WHERE gc.id = dc.id
 			)
 		 GROUP BY
-			dc.id, d.id, dr.id
+			dc.id, d.id, dr.id, g."path"
 	)
 	`, userID, domainID, userID, domainID, userID, domainID, domainID, userID, domainID)
 }
@@ -1012,7 +1014,7 @@ type DBClient struct {
 	UpdatedAt                 sql.NullTime     `db:"updated_at,omitempty"`
 	UpdatedBy                 *string          `db:"updated_by,omitempty"`
 	Status                    clients.Status   `db:"status,omitempty"`
-	ParentGroupPath           string           `db:"parent_group_path,omitempty"`
+	ParentGroupPath           sql.NullString   `db:"parent_group_path,omitempty"`
 	RoleID                    string           `db:"role_id,omitempty"`
 	RoleName                  string           `db:"role_name,omitempty"`
 	Actions                   pq.StringArray   `db:"actions,omitempty"`
@@ -1118,7 +1120,7 @@ func ToClient(t DBClient) (clients.Client, error) {
 		UpdatedAt:                 updatedAt,
 		UpdatedBy:                 updatedBy,
 		Status:                    t.Status,
-		ParentGroupPath:           t.ParentGroupPath,
+		ParentGroupPath:           toString(t.ParentGroupPath),
 		RoleID:                    t.RoleID,
 		RoleName:                  t.RoleName,
 		Actions:                   t.Actions,
@@ -1168,7 +1170,7 @@ type dbClientsPage struct {
 	Metadata   []byte         `db:"metadata"`
 	Tag        string         `db:"tag"`
 	Status     clients.Status `db:"status"`
-	GroupID    string         `db:"group_id"`
+	GroupID    *string        `db:"group_id"`
 	ChannelID  string         `db:"channel_id"`
 	ConnType   string         `db:"type"`
 	RoleName   string         `db:"role_name"`
@@ -1211,9 +1213,16 @@ func PageQuery(pm clients.Page) (string, error) {
 	if pm.Domain != "" {
 		query = append(query, "c.domain_id = :domain_id")
 	}
-	if pm.Group != "" {
-		query = append(query, "c.parent_group_path <@ (SELECT path from groups where id = :group_id) ")
+
+	if pm.Group != nil {
+		switch *pm.Group {
+		case "":
+			query = append(query, "c.parent_group_id = '' ")
+		default:
+			query = append(query, "c.parent_group_path <@ (SELECT path from groups where id = :group_id) ")
+		}
 	}
+
 	if pm.Channel != "" {
 		query = append(query, "conn.channel_id = :channel_id ")
 		if pm.ConnectionType != "" {
