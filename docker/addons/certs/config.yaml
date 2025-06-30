@@ -7,14 +7,16 @@ organization:
 organizational_unit:
   - "AbstractMachines_ca"
 country:
-  - "France"
+  - "US"
 province:
-  - "Paris"
+  - "Iowa"
 locality:
-  - "Quai de Valmy"
+  - "Council Bluffs"
 postal_code:
-  - "75010 Paris"
+  - "51501"
 dns_names:
-  - "localhost"
+  - "mqtt.ayr.energy"
+  - "api.ayr.energy"
 ip_addresses:
   - "localhost"
+  - "34.63.252.144"
