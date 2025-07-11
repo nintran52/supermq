@@ -432,25 +432,28 @@ func (cr *channelRepository) RetrieveAll(ctx context.Context, pm channels.Page) 
 	if err != nil {
 		return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 	}
-	rows, err := cr.db.NamedQueryContext(ctx, q, dbPage)
-	if err != nil {
-		return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
-	}
-	defer rows.Close()
 
 	var items []channels.Channel
-	for rows.Next() {
-		dbch := dbChannel{}
-		if err := rows.StructScan(&dbch); err != nil {
-			return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
-		}
-
-		ch, err := toChannel(dbch)
+	if !pm.OnlyTotal {
+		rows, err := cr.db.NamedQueryContext(ctx, q, dbPage)
 		if err != nil {
-			return channels.ChannelsPage{}, err
+			return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrFailedToRetrieveAllGroups, err)
 		}
+		defer rows.Close()
 
-		items = append(items, ch)
+		for rows.Next() {
+			dbch := dbChannel{}
+			if err := rows.StructScan(&dbch); err != nil {
+				return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
+			}
+
+			ch, err := toChannel(dbch)
+			if err != nil {
+				return channels.ChannelsPage{}, err
+			}
+
+			items = append(items, ch)
+		}
 	}
 	cq := fmt.Sprintf(`SELECT COUNT(*) AS total_count
 			FROM (
@@ -546,25 +549,27 @@ func (repo *channelRepository) retrieveChannels(ctx context.Context, domainID, u
 		return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
 	}
 
-	rows, err := repo.db.NamedQueryContext(ctx, q, dbPage)
-	if err != nil {
-		return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
-	}
-	defer rows.Close()
-
 	var items []channels.Channel
-	for rows.Next() {
-		dbc := dbChannel{}
-		if err := rows.StructScan(&dbc); err != nil {
+	if !pm.OnlyTotal {
+		rows, err := repo.db.NamedQueryContext(ctx, q, dbPage)
+		if err != nil {
 			return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
 		}
+		defer rows.Close()
 
-		c, err := toChannel(dbc)
-		if err != nil {
-			return channels.ChannelsPage{}, err
+		for rows.Next() {
+			dbc := dbChannel{}
+			if err := rows.StructScan(&dbc); err != nil {
+				return channels.ChannelsPage{}, errors.Wrap(repoerr.ErrViewEntity, err)
+			}
+
+			c, err := toChannel(dbc)
+			if err != nil {
+				return channels.ChannelsPage{}, err
+			}
+
+			items = append(items, c)
 		}
-
-		items = append(items, c)
 	}
 
 	cq := fmt.Sprintf(`%s
@@ -696,10 +701,13 @@ direct_groups_with_subgroup AS (
 		"groups" g ON g.id = gr.entity_id
 	JOIN
 		groups_role_actions all_actions ON all_actions.role_id = grm.role_id
+	LEFT JOIN "groups" g2
+		ON g2.path <@ g.path AND nlevel(g2.path) = nlevel(g.path) + 1
 	WHERE
 		grm.member_id = '%s'
 		AND g.domain_id = '%s'
 		AND gra."action" LIKE 'subgroup_channel%%'
+		AND g2.path IS NULL
 	GROUP BY
 		gr.entity_id, grm.member_id, gr.id, gr."name", g."path", g.id
 ),
@@ -1289,7 +1297,7 @@ func PageQuery(pm channels.Page) (string, error) {
 	if pm.Domain != "" {
 		query = append(query, "c.domain_id = :domain_id")
 	}
-	if pm.Group.Set {
+	if pm.Group.Valid {
 		switch {
 		case pm.Group.Value != "":
 			query = append(query, "c.parent_group_path <@ (SELECT path from groups where id = :group_id) ")
@@ -1357,7 +1365,7 @@ func toDBChannelsPage(pm channels.Page) (dbChannelsPage, error) {
 		Metadata:   data,
 		Tag:        pm.Tag,
 		Status:     pm.Status,
-		GroupID:    sql.NullString{Valid: pm.Group.Set, String: pm.Group.Value},
+		GroupID:    sql.NullString{Valid: pm.Group.Valid, String: pm.Group.Value},
 		ClientID:   pm.Client,
 		ConnType:   pm.ConnectionType,
 		RoleName:   pm.RoleName,

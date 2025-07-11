@@ -124,29 +124,30 @@ type Domain struct {
 }
 
 type Page struct {
-	Total    uint64   `json:"total"`
-	Offset   uint64   `json:"offset"`
-	Limit    uint64   `json:"limit"`
-	Name     string   `json:"name,omitempty"`
-	Order    string   `json:"-"`
-	Dir      string   `json:"-"`
-	Metadata Metadata `json:"metadata,omitempty"`
-	Tag      string   `json:"tag,omitempty"`
-	RoleName string   `json:"role_name,omitempty"`
-	RoleID   string   `json:"role_id,omitempty"`
-	Actions  []string `json:"actions,omitempty"`
-	Status   Status   `json:"status,omitempty"`
-	ID       string   `json:"id,omitempty"`
-	IDs      []string `json:"-"`
-	Identity string   `json:"identity,omitempty"`
-	UserID   string   `json:"user_id,omitempty"`
+	Total     uint64   `json:"total"`
+	Offset    uint64   `json:"offset"`
+	Limit     uint64   `json:"limit"`
+	OnlyTotal bool     `json:"only_total"`
+	Name      string   `json:"name,omitempty"`
+	Order     string   `json:"-"`
+	Dir       string   `json:"-"`
+	Metadata  Metadata `json:"metadata,omitempty"`
+	Tag       string   `json:"tag,omitempty"`
+	RoleName  string   `json:"role_name,omitempty"`
+	RoleID    string   `json:"role_id,omitempty"`
+	Actions   []string `json:"actions,omitempty"`
+	Status    Status   `json:"status,omitempty"`
+	ID        string   `json:"id,omitempty"`
+	IDs       []string `json:"-"`
+	Identity  string   `json:"identity,omitempty"`
+	UserID    string   `json:"user_id,omitempty"`
 }
 
 type DomainsPage struct {
 	Total   uint64   `json:"total"`
-	Offset  uint64   `json:"offset"`
-	Limit   uint64   `json:"limit"`
-	Domains []Domain `json:"domains"`
+	Offset  uint64   `json:"offset,omitempty"`
+	Limit   uint64   `json:"limit,omitempty"`
+	Domains []Domain `json:"domains,omitempty"`
 }
 
 func (page DomainsPage) MarshalJSON() ([]byte, error) {
@@ -201,11 +202,14 @@ type Service interface {
 	ViewInvitation(ctx context.Context, session authn.Session, inviteeUserID, domainID string) (invitation Invitation, err error)
 
 	// ListInvitations returns a list of invitations.
+	// By default, it will list invitations the current user has received.
+	ListInvitations(ctx context.Context, session authn.Session, page InvitationPageMeta) (invitations InvitationPage, err error)
+
+	// ListDomainInvitations returns a list of invitations for the domain.
 	// People who can list invitations are:
 	// - platform administrators can list all invitations
 	// - domain administrators can list invitations for their domain
-	// By default, it will list invitations the current user has sent or received.
-	ListInvitations(ctx context.Context, session authn.Session, page InvitationPageMeta) (invitations InvitationPage, err error)
+	ListDomainInvitations(ctx context.Context, session authn.Session, page InvitationPageMeta) (invitations InvitationPage, err error)
 
 	// AcceptInvitation accepts an invitation by adding the user to the domain.
 	AcceptInvitation(ctx context.Context, session authn.Session, domainID string) (invitation Invitation, err error)

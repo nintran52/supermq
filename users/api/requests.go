@@ -83,6 +83,7 @@ type listUsersReq struct {
 	status    users.Status
 	offset    uint64
 	limit     uint64
+	onlyTotal bool
 	userName  string
 	tag       string
 	firstName string
@@ -253,7 +254,7 @@ type loginUserReq struct {
 
 func (req loginUserReq) validate() error {
 	if req.Username == "" {
-		return apiutil.ErrMissingIdentity
+		return apiutil.ErrMissingUsernameEmail
 	}
 	if req.Password == "" {
 		return apiutil.ErrMissingPass

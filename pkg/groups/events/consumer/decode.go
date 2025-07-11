@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/absmach/supermq/groups"
+	"github.com/absmach/supermq/internal/nullable"
 	"github.com/absmach/supermq/pkg/errors"
 	"github.com/absmach/supermq/pkg/roles"
 	rconsumer "github.com/absmach/supermq/pkg/roles/rolemanager/events/consumer"
@@ -33,9 +34,7 @@ var (
 	errUpdatedAt     = errors.New("failed to parse 'updated_at' time")
 )
 
-const (
-	layout = "2006-01-02T15:04:05.999999Z"
-)
+const layout = "2006-01-02T15:04:05.999999Z"
 
 func ToGroups(data map[string]interface{}) (groups.Group, error) {
 	var g groups.Group
@@ -81,7 +80,7 @@ func ToGroups(data map[string]interface{}) (groups.Group, error) {
 
 	desc, ok := data["description"].(string)
 	if ok {
-		g.Description = desc
+		g.Description = nullable.New(desc)
 	}
 
 	parent, ok := data["parent"].(string)

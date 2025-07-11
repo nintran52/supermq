@@ -183,7 +183,7 @@ func (lm *loggingMiddleware) SendInvitation(ctx context.Context, session authn.S
 			slog.String("domain_id", invitation.DomainID),
 		}
 		if err != nil {
-			args = append(args, slog.Any("error", err))
+			args = append(args, slog.String("error", err.Error()))
 			lm.logger.Warn("Send invitation failed", args...)
 			return
 		}
@@ -200,7 +200,7 @@ func (lm *loggingMiddleware) ViewInvitation(ctx context.Context, session authn.S
 			slog.String("domain_id", domainID),
 		}
 		if err != nil {
-			args = append(args, slog.Any("error", err))
+			args = append(args, slog.String("error", err.Error()))
 			lm.logger.Warn("View invitation failed", args...)
 			return
 		}
@@ -220,13 +220,33 @@ func (lm *loggingMiddleware) ListInvitations(ctx context.Context, session authn.
 			),
 		}
 		if err != nil {
-			args = append(args, slog.Any("error", err))
+			args = append(args, slog.String("error", err.Error()))
 			lm.logger.Warn("List invitations failed", args...)
 			return
 		}
 		lm.logger.Info("List invitations completed successfully", args...)
 	}(time.Now())
 	return lm.svc.ListInvitations(ctx, session, pm)
+}
+
+func (lm *loggingMiddleware) ListDomainInvitations(ctx context.Context, session authn.Session, pm domains.InvitationPageMeta) (invs domains.InvitationPage, err error) {
+	defer func(begin time.Time) {
+		args := []any{
+			slog.String("duration", time.Since(begin).String()),
+			slog.Group("page",
+				slog.Uint64("offset", pm.Offset),
+				slog.Uint64("limit", pm.Limit),
+				slog.Uint64("total", invs.Total),
+			),
+		}
+		if err != nil {
+			args = append(args, slog.String("error", err.Error()))
+			lm.logger.Warn("List domain invitations failed", args...)
+			return
+		}
+		lm.logger.Info("List domain invitations completed successfully", args...)
+	}(time.Now())
+	return lm.svc.ListDomainInvitations(ctx, session, pm)
 }
 
 func (lm *loggingMiddleware) AcceptInvitation(ctx context.Context, session authn.Session, domainID string) (inv domains.Invitation, err error) {
@@ -236,7 +256,7 @@ func (lm *loggingMiddleware) AcceptInvitation(ctx context.Context, session authn
 			slog.String("domain_id", domainID),
 		}
 		if err != nil {
-			args = append(args, slog.Any("error", err))
+			args = append(args, slog.String("error", err.Error()))
 			lm.logger.Warn("Accept invitation failed", args...)
 			return
 		}
@@ -252,7 +272,7 @@ func (lm *loggingMiddleware) RejectInvitation(ctx context.Context, session authn
 			slog.String("domain_id", domainID),
 		}
 		if err != nil {
-			args = append(args, slog.Any("error", err))
+			args = append(args, slog.String("error", err.Error()))
 			lm.logger.Warn("Reject invitation failed", args...)
 			return
 		}
@@ -269,7 +289,7 @@ func (lm *loggingMiddleware) DeleteInvitation(ctx context.Context, session authn
 			slog.String("domain_id", domainID),
 		}
 		if err != nil {
-			args = append(args, slog.Any("error", err))
+			args = append(args, slog.String("error", err.Error()))
 			lm.logger.Warn("Delete invitation failed", args...)
 			return
 		}
